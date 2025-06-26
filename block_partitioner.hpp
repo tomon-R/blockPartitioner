@@ -7,6 +7,8 @@
 #include <array>
 #include <string>
 #include <functional>
+#include <map>
+#include <tuple>
 
 namespace partitioner {
 
@@ -36,6 +38,9 @@ public:
     */
     Node* find(Index3 idx) const;
     const std::vector<std::vector<std::vector<Node*>>>& getNodes() const;
+    void setNodes(std::vector<std::vector<std::vector<Node*>>>&& n) {
+        nodes = std::move(n);
+    }
 };
 
 struct Subdomain {
@@ -72,6 +77,7 @@ class MeshingService {
 public:
     /**
      * Builds a 3D array with structured positioned node assets
+     * It works because it assumes mesh to be structured. It can't apply to free mesh.
      */
     static Mesh structuredMesh(const std::vector<Node>& nodes);
 };
@@ -86,25 +92,29 @@ public:
 
 class ValidationService {
 
-    static bool ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const Tolerance tolerance);
-    static bool ifNodeSizesEqual(const std::vector<Subdomain>& subdomainAssets);
-    static bool ifNodeOrdersEqual(const std::vector<Subdomain>& subdomainAssets);
-    static bool ifNodePositionsEqual(const std::vector<Subdomain>& subdomainAssets);
+    static std::tuple<bool, std::string> ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const Tolerance tolerance);
+    static std::tuple<bool, std::string> ifNodeSizesEqual(const std::vector<Subdomain>& subdomainAssets);
+    static std::tuple<bool, std::string> ifNodeOrdersEqual(const std::vector<Subdomain>& subdomainAssets);
+    static std::tuple<bool, std::string> ifNodePositionsEqual(const std::vector<Subdomain>& subdomainAssets);
 
 public:
-    static bool ifBlocksValid(const Domain& domain);
+    static std::tuple<bool, std::string> ifBlocksValid(const Domain& domain, const Tolerance tolerance);
 
-};
-
-
-class Util {
-public:
-    template <typename T>
-    static void qSort(std::vector<T>& array, std::function<bool(const T, const T)> judge) {
-        std::sort(array.begin(), array.end(), judge);
-    }
 };
 
 } // namespace partitioner
+
+class Args {
+    std::vector<std::string> positionals;
+    std::map<std::string, std::string> options;
+
+public:
+    Args Args::parse(int argc, char* argv[], size_t requiredPositionals) ;
+    std::string getOpt(const std::string& key) const;
+    const std::vector<std::string>& getPos() const { 
+        return positionals; 
+    }
+};
+
 
 #endif // BLOCK_PARTITIONER_HPP
