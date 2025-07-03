@@ -15,14 +15,14 @@ using namespace partitioner;
 int main(int argc, char* argv[]) {
     Args args = Args().parse(argc, argv, 3);
 
-    std::vector<std::string>& positionals = args.getPos();
+    std::vector<std::string> positionals = args.getPos();
     int nx = std::stoi(positionals[0]);
     int ny = std::stoi(positionals[1]);
     int nz = std::stoi(positionals[2]);
 
-    std::string input_path = args.getOpt("-ig").empty() ? args.getOpt("-ig") : "./node.dat";
-    std::string output_dir = args.getOpt("-d").empty() ? args.getOpt("-d") : "./part.dat";
-    double epsilon = args.getOpt("-e").empty() ? std::stod(args.getOpt("-e")) : 0.0;
+    std::string input_path = args.getOpt("-ig").empty() ? "./node.dat" : args.getOpt("-ig");
+    std::string output_dir = args.getOpt("-d").empty() ?  "./part.dat" : args.getOpt("-d");
+    double tolerance = args.getOpt("-e").empty() ? 0.0 : std::stod(args.getOpt("-e"));
 
     // Load domain from file (dummy)
     Domain domain;
@@ -32,18 +32,28 @@ int main(int argc, char* argv[]) {
     // Build mesh
     domain.globalMesh = MeshingService::structuredMesh(domain.nodes);
 
+
+    bool canDivide;
+    std::string divideError;
+    std::tie(canDivide, divideError) = ValidationService::canDivideEvenly(domain.globalMesh, nx, ny, nz);
+
+    if (!canDivide) {
+        std::cerr << divideError << std::endl;
+        return 1;
+    }
+
     // Partition
     domain.blocks = PartitionService::block(domain.globalMesh, nx, ny, nz);
 
     bool isValid;
     std::string errorMessage;
-    std::tie(isValid, errorMessage) = ValidationService::ifBlocksValid(domain);
+    std::tie(isValid, errorMessage) = ValidationService::ifBlocksValid(domain, tolerance);
 
     // Validate
     if (isValid) {
         std::cout << "Partitioning is valid.\n";
     } else {
-        std::cerr << "Partitioning validation failed.\n";
+        std::cerr << errorMessage << std::endl;
     }
 
     // Write output
@@ -82,9 +92,9 @@ std::vector<Node> FileIoService::load(const std::string path) {
         Node node;
         node.id = static_cast<int>(i);
         node.pos = {x, y, z};
-        node.globalIdx = {0, 0, 0};  // structuredMeshで上書きされる
-        node.subId = -1;
-        node.localIdx = {0, 0, 0};
+        node.globalIdx = {0, 0, 0};     // will be assigned by MeshingService
+        node.subId = -1;                // will be assigned by PartitionService
+        node.localIdx = {0, 0, 0};      // will be assigned by PartitionService
         nodes.push_back(node);
     }
 
@@ -109,7 +119,6 @@ void FileIoService::write(const std::string path, const Domain& domain) {
 }
 
 Mesh MeshingService::structuredMesh(const std::vector<Node>& nodes) {
-    double TOLERANCE = 1e-8;
     Mesh mesh;
     if (nodes.empty()) return mesh;
 
@@ -122,16 +131,14 @@ Mesh MeshingService::structuredMesh(const std::vector<Node>& nodes) {
     }
 
     // 2. 重複を除いてソート
-    auto unique_sorted = [](std::vector<double>& v, double tolerance) {
+    auto unique_sorted = [](std::vector<double>& v) {
         std::sort(v.begin(), v.end());
-        v.erase(std::unique(v.begin(), v.end(), [](double a, double b) {
-            return std::abs(a - b) < tolerance;
-        }), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
     };
 
-    unique_sorted(xs, TOLERANCE);
-    unique_sorted(ys, TOLERANCE);
-    unique_sorted(zs, TOLERANCE);
+    unique_sorted(xs);
+    unique_sorted(ys);
+    unique_sorted(zs);
 
     size_t nx = xs.size();
     size_t ny = ys.size();
@@ -146,16 +153,16 @@ Mesh MeshingService::structuredMesh(const std::vector<Node>& nodes) {
 
     // 4. 各ノードにグリッドインデックスを割り当てて配置
     for (auto& node : const_cast<std::vector<Node>&>(nodes)) {
-        auto find_idx = [](const std::vector<double>& v, double val, double tolerance) -> size_t {
+        auto find_idx = [](const std::vector<double>& v, double val) -> size_t {
             for (size_t i = 0; i < v.size(); ++i) {
-                if (std::abs(v[i] - val) < tolerance) return i;
+                if (std::abs(v[i] - val) == 0 ) return i;
             }
             throw std::runtime_error("Coordinate not found in grid axis");
         };
 
-        size_t i = find_idx(xs, node.pos.x, TOLERANCE);
-        size_t j = find_idx(ys, node.pos.y, TOLERANCE);
-        size_t k = find_idx(zs, node.pos.z, TOLERANCE);
+        size_t i = find_idx(xs, node.pos.x);
+        size_t j = find_idx(ys, node.pos.y);
+        size_t k = find_idx(zs, node.pos.z);
 
         node.globalIdx = {i, j, k};
         grid[i][j][k] = &node;
@@ -163,6 +170,9 @@ Mesh MeshingService::structuredMesh(const std::vector<Node>& nodes) {
 
     // 5. メッシュを構築
     mesh = Mesh();
+    mesh.setBoundaries(xs[0], xs[nx - 1],
+                       ys[0], ys[ny - 1],
+                       zs[0], zs[nz - 1]);
     mesh.setNodes(std::move(grid));
 
     return mesh;
@@ -211,11 +221,11 @@ std::vector<Subdomain> PartitionService::block(const Mesh& mesh, int nx, int ny,
 
 
 // ValidationService private static methods
-std::tuple<bool, std::string> ValidationService::ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const Tolerance tolerance) {
+std::tuple<bool, std::string> ValidationService::ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const double tolerance) {
     if (subdomainAssets.empty()) return std::forward_as_tuple(true, "");
     const size_t baseSize = subdomainAssets[0].size;
     for (const auto& sub : subdomainAssets) {
-        if (std::abs(static_cast<double>(sub.size - baseSize)) > tolerance.tolerance * baseSize) {
+        if (std::abs(static_cast<double>(sub.size - baseSize)) > tolerance * baseSize) {
             return std::forward_as_tuple(false, "Block size mismatch.");
         }
     }
@@ -255,7 +265,16 @@ std::tuple<bool, std::string> ValidationService::ifNodePositionsEqual(const std:
    return std::forward_as_tuple(true, "");
 }
 
-std::tuple<bool, std::string> ValidationService::ifBlocksValid(const Domain& domain, const Tolerance tolerance) {
+std::tuple<bool, std::string> ValidationService::ifAllNodesPossessed(const Domain& domain){
+    const auto& nodes = domain.nodes;
+    if (nodes.empty()) return std::forward_as_tuple(false, "Node not possessed.");
+    for (const auto& node : nodes) {
+        if (node.subId == -1) return std::forward_as_tuple(false, "Node not possessed.");
+    }
+    return std::forward_as_tuple(true, "");
+}
+
+std::tuple<bool, std::string> ValidationService::ifBlocksValid(const Domain& domain, const double tolerance) {
     const auto& blocks = domain.blocks;
 
     bool passed;
@@ -273,7 +292,22 @@ std::tuple<bool, std::string> ValidationService::ifBlocksValid(const Domain& dom
     std::tie(passed, errorMessage) = ifNodePositionsEqual(blocks);
     if (!passed) return std::forward_as_tuple(false, errorMessage);
 
+    std::tie(passed, errorMessage) = ifAllNodesPossessed(domain);
+    if (!passed) return std::forward_as_tuple(false, errorMessage);
+
     return std::forward_as_tuple(true, "");
+}
+
+std::tuple<bool, std::string> ValidationService::canDivideEvenly(const Mesh& mesh, int nx, int ny, int nz) {
+    size_t Nx = mesh.getNodes().size();
+    size_t Ny = mesh.getNodes()[0].size();
+    size_t Nz = mesh.getNodes()[0][0].size();
+
+    if (Nx % nx != 0) return {false, "Cannot divide mesh evenly along x-axis."};
+    if (Ny % ny != 0) return {false, "Cannot divide mesh evenly along y-axis."};
+    if (Nz % nz != 0) return {false, "Cannot divide mesh evenly along z-axis."};
+
+    return {true, ""};
 }
 
 } // namespace partitioner
@@ -319,8 +353,9 @@ Args Args::parse(int argc, char* argv[], size_t requiredPositionals) {
 }
 
 std::string Args::getOpt(const std::string& key) const {
-    if (options.find(key) == options.end()) {
-        throw std::invalid_argument("Option '" + key + "' not found.");
+    auto it = options.find(key);
+    if (it == options.end()) {
+        return "";
     }
-    return options.at(key);
-};
+    return it->second;
+}

@@ -15,7 +15,6 @@ namespace partitioner {
 // ───── Values ─────
 struct XYZ           { double x, y, z;   };                 
 struct Index3        { size_t i, j, k;   };            // Grid index
-struct Tolerance     { double tolerance; };
 
 // ───── Entities & Aggregates ─────
 struct Node {                                        
@@ -33,13 +32,21 @@ class Mesh {
 
 public:
     /*
-    * Finds a nodeId by idx. Costs N(O1).
+    * Finds a nodeId by idx. 
     * @return nodeId
     */
     Node* find(Index3 idx) const;
     const std::vector<std::vector<std::vector<Node*>>>& getNodes() const;
     void setNodes(std::vector<std::vector<std::vector<Node*>>>&& n) {
         nodes = std::move(n);
+    }
+    void setBoundaries(double minX, double maxX, double minY, double maxY, double minZ, double maxZ) {
+        this->minX = minX;
+        this->maxX = maxX;
+        this->minY = minY;
+        this->maxY = maxY;
+        this->minZ = minZ;
+        this->maxZ = maxZ;
     }
 };
 
@@ -92,13 +99,16 @@ public:
 
 class ValidationService {
 
-    static std::tuple<bool, std::string> ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const Tolerance tolerance);
+    static std::tuple<bool, std::string> ifBlockSizesEqual(const std::vector<Subdomain>& subdomainAssets, const double tolerance);
     static std::tuple<bool, std::string> ifNodeSizesEqual(const std::vector<Subdomain>& subdomainAssets);
     static std::tuple<bool, std::string> ifNodeOrdersEqual(const std::vector<Subdomain>& subdomainAssets);
     static std::tuple<bool, std::string> ifNodePositionsEqual(const std::vector<Subdomain>& subdomainAssets);
+    static std::tuple<bool, std::string> ifAllNodesPossessed(const Domain& domain);
+
 
 public:
-    static std::tuple<bool, std::string> ifBlocksValid(const Domain& domain, const Tolerance tolerance);
+    static std::tuple<bool, std::string> ifBlocksValid(const Domain& domain, const double tolerance);
+    static std::tuple<bool, std::string> canDivideEvenly(const Mesh& mesh, int nx, int ny, int nz);
 
 };
 
@@ -109,7 +119,7 @@ class Args {
     std::map<std::string, std::string> options;
 
 public:
-    Args Args::parse(int argc, char* argv[], size_t requiredPositionals) ;
+    Args parse(int argc, char* argv[], size_t requiredPositionals) ;
     std::string getOpt(const std::string& key) const;
     const std::vector<std::string>& getPos() const { 
         return positionals; 

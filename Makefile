@@ -1,11 +1,14 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 
-block_partitioner: block_partitioner.o
-	$(CXX) $(CXXFLAGS) -o block_partitioner block_partitioner.o
+TARGET = block_partitioner
+SRC = block_partitioner.cpp
+HDR = block_partitioner.hpp
 
-block_partitioner.o: block_partitioner.cpp
-	$(CXX) $(CXXFLAGS) -c block_partitioner.cpp
+all: $(TARGET)
+
+$(TARGET): $(SRC) $(HDR)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRC)
 
 clean:
-	rm -f block_partitioner block_partitioner.o
+	rm -f $(TARGET)
